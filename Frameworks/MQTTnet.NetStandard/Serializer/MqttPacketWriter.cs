@@ -56,15 +56,15 @@ namespace MQTTnet.Serializer
             Write(value);
         }
 
-        public static byte[] GetRemainingLength(int length)
+        public static byte[] EncodeRemainingLength(int length)
         {
             if (length <= 0)
             {
-                return new [] { (byte)0 };
+                return new[] { (byte)0 };
             }
 
             var bytes = new byte[4];
-            int arraySize = 0;
+            var offset = 0;
 
             // Alorithm taken from http://docs.oasis-open.org/mqtt/mqtt/v3.1.1/os/mqtt-v3.1.1-os.html.
             var x = length;
@@ -77,12 +77,13 @@ namespace MQTTnet.Serializer
                     encodedByte = encodedByte | 128;
                 }
 
-                bytes[arraySize] = (byte)encodedByte;
+                bytes[offset] = (byte)encodedByte;
 
-                arraySize++;
+                offset++;
             } while (x > 0);
 
-            return bytes.Take(arraySize).ToArray();
+            Array.Resize(ref bytes, offset);
+            return bytes;
         }
     }
 }

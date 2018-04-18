@@ -1,5 +1,4 @@
 ﻿using System;
-using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using MQTTnet.Packets;
@@ -11,7 +10,9 @@ namespace MQTTnet.Adapter
     {
         IMqttPacketSerializer PacketSerializer { get; }
 
-        Task ConnectAsync(TimeSpan timeout);
+        void OnPacket(Action<MqttBasePacket> action);
+
+        Task ConnectAsync(TimeSpan timeout, CancellationToken cancellationToken);
 
         Task DisconnectAsync(TimeSpan timeout);
 

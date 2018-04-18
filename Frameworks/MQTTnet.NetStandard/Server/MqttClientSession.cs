@@ -186,6 +186,8 @@ namespace MQTTnet.Server
 
         private async Task ReceivePacketsAsync(IMqttChannelAdapter adapter, CancellationToken cancellationToken)
         {
+            
+
             try
             {
                 while (!cancellationToken.IsCancellationRequested)

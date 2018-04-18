@@ -60,7 +60,7 @@ namespace MQTTnet.Client
                 _adapter = _adapterFactory.CreateClientAdapter(options, _logger);
 
                 _logger.Verbose<MqttClient>("Trying to connect with server.");
-                await _adapter.ConnectAsync(_options.CommunicationTimeout).ConfigureAwait(false);
+                await _adapter.ConnectAsync(_options.CommunicationTimeout, _cancellationTokenSource.Token).ConfigureAwait(false);
                 _logger.Verbose<MqttClient>("Connection with server established.");
 
                 await StartReceivingPacketsAsync().ConfigureAwait(false);
@@ -92,14 +92,9 @@ namespace MQTTnet.Client
 
         public async Task DisconnectAsync()
         {
-            if (!IsConnected)
-            {
-                return;
-            }
-
             try
             {
-                if (!_cancellationTokenSource.IsCancellationRequested)
+                if (IsConnected && !_cancellationTokenSource.IsCancellationRequested)
                 {
                     await SendAsync(new MqttDisconnectPacket()).ConfigureAwait(false);
                 }
@@ -449,48 +444,6 @@ namespace MQTTnet.Client
             }
         }
 
-        private async Task ReceivePacketsAsync()
-        {
-            _logger.Verbose<MqttClient>("Start receiving packets.");
-
-            try
-            {
-                while (!_cancellationTokenSource.Token.IsCancellationRequested)
-                {
-                    _isReceivingPackets = true;
-
-                    var packet = await _adapter.ReceivePacketAsync(TimeSpan.Zero, _cancellationTokenSource.Token).ConfigureAwait(false);
-
-                    if (_cancellationTokenSource.Token.IsCancellationRequested)
-                    {
-                        return;
-                    }
-
-                    StartProcessReceivedPacket(packet);
-                }
-            }
-            catch (Exception exception)
-            {
-                if (exception is OperationCanceledException)
-                {
-                }
-                else if (exception is MqttCommunicationException)
-                {
-                    _logger.Warning<MqttClient>(exception, "MQTT communication exception while receiving packets.");
-                }
-                else
-                {
-                    _logger.Error<MqttClient>(exception, "Unhandled exception while receiving packets.");
-                }
-
-                await DisconnectInternalAsync(_packetReceiverTask, exception).ConfigureAwait(false);
-            }
-            finally
-            {
-                _logger.Verbose<MqttClient>("Stopped receiving packets.");
-            }
-        }
-
         private void StartProcessReceivedPacket(MqttBasePacket packet)
         {
             Task.Run(() => ProcessReceivedPacketAsync(packet), _cancellationTokenSource.Token);
@@ -498,14 +451,9 @@ namespace MQTTnet.Client
 
         private async Task StartReceivingPacketsAsync()
         {
-            _isReceivingPackets = false;
-
-            _packetReceiverTask = Task.Run(ReceivePacketsAsync, _cancellationTokenSource.Token);
-
-            while (!_isReceivingPackets && !_cancellationTokenSource.Token.IsCancellationRequested)
-            {
-                await Task.Delay(TimeSpan.FromMilliseconds(100), _cancellationTokenSource.Token).ConfigureAwait(false);
-            }
+            _adapter.OnPacket(packet => {
+                StartProcessReceivedPacket(packet);
+            });
         }
 
         private void StartSendingKeepAliveMessages()
