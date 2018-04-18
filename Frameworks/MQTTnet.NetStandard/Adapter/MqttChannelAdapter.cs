@@ -4,6 +4,7 @@ using System.Net.Sockets;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Threading.Tasks.Dataflow;
 using MQTTnet.Channel;
 using MQTTnet.Diagnostics;
 using MQTTnet.Exceptions;
@@ -21,12 +22,21 @@ namespace MQTTnet.Adapter
         private bool _isDisposed;
         private readonly IMqttNetLogger _logger;
         private readonly IMqttChannel _channel;
+        private MqttPacketStateMachine _packetStateMachine;
+
+        private BufferBlock<MqttBasePacket> _receiveBuffer = new BufferBlock<MqttBasePacket>();
+        private CancellationTokenSource _receiveTaskCts = new CancellationTokenSource();
 
         public MqttChannelAdapter(IMqttChannel channel, IMqttPacketSerializer serializer, IMqttNetLogger logger)
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _channel = channel ?? throw new ArgumentNullException(nameof(channel));
             PacketSerializer = serializer ?? throw new ArgumentNullException(nameof(serializer));
+            _packetStateMachine = new MqttPacketStateMachine(PacketSerializer);
+
+            _packetStateMachine.OnPacket(p => _receiveBuffer.Post(p));
+
+            DataIngestTask().ConfigureAwait(false);
         }
 
         public IMqttPacketSerializer PacketSerializer { get; }
@@ -36,13 +46,16 @@ namespace MQTTnet.Adapter
             ThrowIfDisposed();
             _logger.Verbose<MqttChannelAdapter>("Connecting [Timeout={0}]", timeout);
 
-            return ExecuteAndWrapExceptionAsync(() => _channel.ConnectAsync(cancellationToken).TimeoutAfter(timeout));
+            return ExecuteAndWrapExceptionAsync(() => _channel.ConnectAsync(cancellationToken).TimeoutAfter(timeout));              
+            
         }
 
         public Task DisconnectAsync(TimeSpan timeout)
         {
             ThrowIfDisposed();
             _logger.Verbose<MqttChannelAdapter>("Disconnecting [Timeout={0}]", timeout);
+
+            _receiveTaskCts.Cancel();
 
             return ExecuteAndWrapExceptionAsync(() => _channel.DisconnectAsync().TimeoutAfter(timeout));
         }
@@ -83,54 +96,33 @@ namespace MQTTnet.Adapter
             ThrowIfDisposed();
 
             MqttBasePacket packet = null;
+
             await ExecuteAndWrapExceptionAsync(async () =>
             {
-                ReceivedMqttPacket receivedMqttPacket = null;
                 try
                 {
-                    if (timeout > TimeSpan.Zero)
+                    if (timeout == TimeSpan.Zero)
                     {
-                        var timeoutCts = new CancellationTokenSource(timeout);
-                        var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);
+                        packet = await _receiveBuffer.ReceiveAsync(cancellationToken);
 
-                        try
-                        {
-                            receivedMqttPacket = await ReceiveAsync(_channel, linkedCts.Token).ConfigureAwait(false);
-                        }
-                        catch (OperationCanceledException exception)
-                        {
-                            var timedOut = linkedCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested;
-                            if (timedOut)
-                            {
-                                throw new MqttCommunicationTimedOutException(exception);
-                            }
-                            else
-                            {
-                                throw;
-                            }
-                        }
                     }
                     else
                     {
-                        receivedMqttPacket = await ReceiveAsync(_channel, cancellationToken).ConfigureAwait(false);
-                    }
+                        packet = await _receiveBuffer.ReceiveAsync(timeout, cancellationToken);
 
-                    if (receivedMqttPacket == null || cancellationToken.IsCancellationRequested)
-                    {
-                        throw new TaskCanceledException();
                     }
-
-                    packet = PacketSerializer.Deserialize(receivedMqttPacket.Header, receivedMqttPacket.Body);
-                    if (packet == null)
-                    {
-                        throw new MqttProtocolViolationException("Received malformed packet.");
-                    }
-
-                    _logger.Verbose<MqttChannelAdapter>("RX <<< {0}", packet);
                 }
-                finally
+                catch (OperationCanceledException exception)
                 {
-                    receivedMqttPacket?.Dispose();
+                    var timedOut = !cancellationToken.IsCancellationRequested;
+                    if (timedOut)
+                    {
+                        throw new MqttCommunicationTimedOutException(exception);
+                    }
+                    else
+                    {
+                        throw;
+                    }
                 }
             }).ConfigureAwait(false);
 
@@ -226,6 +218,35 @@ namespace MQTTnet.Adapter
             {
                 throw new MqttCommunicationException(exception);
             }
+        }
+
+        private Task DataIngestTask()
+        {
+            return Task.Run(async () =>
+            {
+
+                var buffer = new byte[ReadBufferSize];
+                while (!_isDisposed && !_receiveTaskCts.IsCancellationRequested)
+                {                                      
+                    try
+                    {                        
+                        var readBytesCount = await _channel.ReadAsync(buffer, 0, buffer.Length, _receiveTaskCts.Token).ConfigureAwait(false);
+                        if (readBytesCount > 0)
+                        {
+                            _packetStateMachine.Push(new ArraySegment<byte>(buffer, 0, readBytesCount));
+                        }
+                        else if(readBytesCount == 0)
+                        {
+                            break;
+                        }
+
+                    }
+                    catch (Exception ex)
+                    {
+
+                    }
+                }
+            });
         }
 
         public void Dispose()
