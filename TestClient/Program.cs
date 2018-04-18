@@ -1,5 +1,6 @@
 ﻿using MQTTnet;
 using MQTTnet.Client;
+using MQTTnet.Diagnostics;
 using MQTTnet.ManagedClient;
 using System;
 using System.Collections.Concurrent;
@@ -17,6 +18,8 @@ namespace TestClient
             // Create a new MQTT client.
             var factory = new MqttFactory();
             var mqttClient = factory.CreateManagedMqttClient();
+
+
 
             // Create TCP based options using the builder.
             var clientOptions = new MqttClientOptionsBuilder()
@@ -59,6 +62,8 @@ namespace TestClient
         {
             Console.WriteLine("Starting Client");
             Console.ReadKey();
+
+            //MqttNetGlobalLogger.LogMessagePublished += (s, e) => { Debug.WriteLine($"{e.TraceMessage.Level}: {e.TraceMessage.Message}"); };
 
             var client1 = await NewClient("client1");
 
