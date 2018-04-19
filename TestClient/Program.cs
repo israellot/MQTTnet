@@ -74,8 +74,9 @@ namespace TestClient
             ObjectPool<MqttApplicationMessage> messagePool = new ObjectPool<MqttApplicationMessage>(() => new MqttApplicationMessage()
             {
                 QualityOfServiceLevel = MQTTnet.Protocol.MqttQualityOfServiceLevel.AtMostOnce,
-                Retain = false,
-                Topic = "a/b/c"
+                Retain = false,                
+                Topic = "a/b/c",
+                Payload=new byte[] {1,2,3,4}
             });
 
             var range = Enumerable.Range(0, 1);
@@ -102,7 +103,7 @@ namespace TestClient
                         await _client.PublishAsync(message);
                         Interlocked.Increment(ref messageSentCount);
 
-                        if (messageSentCount - messageReceivedCount > 1000)
+                        if (messageSentCount - messageReceivedCount > 10000)
                         {
                             if (!overload)
                             {
@@ -111,7 +112,7 @@ namespace TestClient
                                 delay += 1;
                                 delay = delay > 0 ? delay : 0;
                             }
-                            SpinWait.SpinUntil(() => messageSentCount - messageReceivedCount < 200, delay);
+                            SpinWait.SpinUntil(() => messageSentCount - messageReceivedCount < 1000, delay);
                         }
                         else
                         {

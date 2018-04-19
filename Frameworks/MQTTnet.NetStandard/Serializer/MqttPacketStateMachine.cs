@@ -3,6 +3,7 @@ using MQTTnet.Protocol;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -31,24 +32,37 @@ namespace MQTTnet.Serializer
 
         public MqttLengthState Length { get; set; } = new MqttLengthState();
 
-        public MqttBodyState Body { get; set; }
+        public MqttBodyState Body { get; set; } = new MqttBodyState();
 
         public Boolean PacketComplete { get; set; }
+
+        
 
         public class MqttBodyState
         {            
             public int Offset { get; set; }
 
-            public ArraySegment<byte> Data { get; set; }
+            public int WriteOffset { get; set; }
 
-            public MqttBodyState(int size)
+            public byte[] Buffer { get; set; }
+
+            public int Length { get; set; }
+
+            private byte[] _emptyBuffer = new byte[] { };
+
+            public MqttBodyState()
             {
-                Data = new ArraySegment<byte>(new byte[size]);
+                //Data = new ArraySegment<byte>(new byte[size]);
+                Buffer = _emptyBuffer;
             }
 
-            public MqttBodyState(ArraySegment<byte> segment)
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            public void Reset()
             {
-                Data = segment;
+                Offset = 0;
+                Length = 0;
+                WriteOffset = 0;
+                Buffer = _emptyBuffer;
             }
         }
 
@@ -59,6 +73,15 @@ namespace MQTTnet.Serializer
             public int EncodedByte { get; set; } = 0;
 
             public int Count { get; set; }
+
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            public void Reset()
+            {
+                Multiplier = 1;
+                Value = 0;
+                EncodedByte = 0;
+                Count = 0;
+            }
         }
 
         public class MqttHeaderState
@@ -66,6 +89,20 @@ namespace MQTTnet.Serializer
             public MqttControlPacketType PacketType { get; set; }
 
             public byte FixedHeader { get; set; }
+
+            public void Reset()
+            {
+
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void Reset()
+        {            
+            Length.Reset();
+            Body.Reset();
+            PacketComplete = false;
+            Step = MqttPacketStateMachineStep.FixedHeader;
         }
     }
 
@@ -130,7 +167,7 @@ namespace MQTTnet.Serializer
             if (error > 0)
             {
                 //Reset state
-                _state = new MqttPacketStateMachineState();
+                _state.Reset();
             }
 
             return error;
@@ -169,7 +206,7 @@ namespace MQTTnet.Serializer
 
             if (_state.Length.Value == 0)
             {
-                _state.Body = new MqttPacketStateMachineState.MqttBodyState(0);
+                //_state.Body.Data = new ArraySegment<byte>();
                 _state.PacketComplete = true;
             }
 
@@ -182,12 +219,31 @@ namespace MQTTnet.Serializer
         private MqttPacketReadError  ReadBody(ArraySegment<byte> data,out int remaining)
         {
             
-            if (_state.Body == null)
+            if (_state.Body.Length==0 && _state.Length.Value>0)
             {
-                _state.Body = new MqttPacketStateMachineState.MqttBodyState(_state.Length.Value);
+                if (_state.Length.Value <= data.Count)
+                {
+                    //whole body in one shot shortcut
+                    _state.Body.Buffer = data.Array;
+                    _state.Body.Offset = data.Offset;
+                    _state.Body.Length = _state.Length.Value;
+                    _state.Body.WriteOffset= _state.Length.Value;
+
+                    remaining = data.Count - _state.Length.Value;
+                    _state.PacketComplete = true;
+                    return MqttPacketReadError.None;
+
+                }
+                else
+                {
+                    //allocate new buffer
+                    _state.Body.Buffer = new byte[_state.Length.Value];
+                    _state.Body.Length = _state.Length.Value;
+                }
+                
             }
 
-            var bytesToRead = _state.Length.Value - _state.Body.Offset;
+            var bytesToRead = _state.Length.Value - _state.Body.WriteOffset;
             remaining = 0;
 
             if (bytesToRead > 0)
@@ -197,16 +253,16 @@ namespace MQTTnet.Serializer
                 Buffer.BlockCopy(
                     data.Array,
                     data.Offset,
-                    _state.Body.Data.Array,
-                    _state.Body.Offset,
+                    _state.Body.Buffer,
+                    _state.Body.WriteOffset,
                     bytesAvailable
                     );
 
-                _state.Body.Offset += bytesAvailable;
+                _state.Body.WriteOffset += bytesAvailable;
                 remaining = data.Count-bytesAvailable;
             }
 
-            if(_state.Length.Value - _state.Body.Offset==0)            
+            if(_state.Length.Value - _state.Body.WriteOffset == 0)            
             {
                 //body complete
                 _state.PacketComplete = true;
@@ -215,6 +271,8 @@ namespace MQTTnet.Serializer
             return MqttPacketReadError.None;
 
         }
+
+        
 
         private void ReadComplete()
         {
@@ -227,13 +285,13 @@ namespace MQTTnet.Serializer
 
 
             MqttBasePacket packet;
-            using (var ms = new MemoryStream(_state.Body.Data.Array, _state.Body.Data.Offset, _state.Body.Data.Count,false))
+            using (var ms = new MemoryStream(_state.Body.Buffer, _state.Body.Offset, _state.Body.Length,false))
             {
                 packet = _serializer.Deserialize(header, ms);                
             }
 
             //Reset state
-            _state = new MqttPacketStateMachineState();
+            _state.Reset();
 
             OnPacketHandler?.Invoke(packet);
 
