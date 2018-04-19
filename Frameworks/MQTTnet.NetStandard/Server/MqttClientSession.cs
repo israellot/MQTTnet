@@ -24,6 +24,7 @@ namespace MQTTnet.Server
         private CancellationTokenSource _cancellationTokenSource;
         private MqttApplicationMessage _willMessage;
         private bool _wasCleanDisconnect;
+        private CancellationTokenSource _disconnectedCancellationToken = new CancellationTokenSource();
 
         public MqttClientSession(
             string clientId,
@@ -122,6 +123,8 @@ namespace MQTTnet.Server
                 {
                     await ApplicationMessageReceivedCallback(this, willMessage).ConfigureAwait(false);
                 }
+
+                _disconnectedCancellationToken.Cancel();
             }
         }
 
@@ -184,32 +187,37 @@ namespace MQTTnet.Server
             return StopAsync();
         }
 
+        
+
         private async Task ReceivePacketsAsync(IMqttChannelAdapter adapter, CancellationToken cancellationToken)
         {
             
-
-            try
-            {
-                while (!cancellationToken.IsCancellationRequested)
+            adapter.OnPacketHandler = async ( packet) => {
+                try
                 {
-                    var packet = await adapter.ReceivePacketAsync(TimeSpan.Zero, cancellationToken).ConfigureAwait(false);
                     KeepAliveMonitor.PacketReceived(packet);
                     await ProcessReceivedPacketAsync(adapter, packet, cancellationToken).ConfigureAwait(false);
                 }
-            }
-            catch (OperationCanceledException)
+                catch (OperationCanceledException)
+                {
+                }
+                catch (MqttCommunicationException exception)
+                {
+                    _logger.Warning<MqttClientSession>(exception, "Client '{0}': Communication exception while processing client packets.", ClientId);
+                    await StopAsync().ConfigureAwait(false);
+                }
+                catch (Exception exception)
+                {
+                    _logger.Error<MqttClientSession>(exception, "Client '{0}': Unhandled exception while processing client packets.", ClientId);
+                    await StopAsync().ConfigureAwait(false);
+                }
+            };
+
+            while (IsConnected)
             {
+                await Task.Delay(TimeSpan.FromSeconds(1), _disconnectedCancellationToken.Token);
             }
-            catch (MqttCommunicationException exception)
-            {
-                _logger.Warning<MqttClientSession>(exception, "Client '{0}': Communication exception while processing client packets.", ClientId);
-                await StopAsync().ConfigureAwait(false);
-            }
-            catch (Exception exception)
-            {
-                _logger.Error<MqttClientSession>(exception, "Client '{0}': Unhandled exception while processing client packets.", ClientId);
-                await StopAsync().ConfigureAwait(false);
-            }
+
         }
 
         private Task ProcessReceivedPacketAsync(IMqttChannelAdapter adapter, MqttBasePacket packet, CancellationToken cancellationToken)

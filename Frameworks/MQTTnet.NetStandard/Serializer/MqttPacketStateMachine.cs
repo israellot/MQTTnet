@@ -4,6 +4,8 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace MQTTnet.Serializer
 {
@@ -63,12 +65,6 @@ namespace MQTTnet.Serializer
         {
             public MqttControlPacketType PacketType { get; set; }
 
-            public Boolean Retain { get; set; }
-
-            public MqttQualityOfServiceLevel QoS { get; set; }
-
-            public Boolean Dup { get; set; }
-
             public byte FixedHeader { get; set; }
         }
     }
@@ -76,7 +72,7 @@ namespace MQTTnet.Serializer
     public class MqttPacketStateMachine
     {
 
-        Action<MqttBasePacket> _onPacketAction;
+        public Func<MqttBasePacket, Task> OnPacketHandler { get; set; }
 
         MqttPacketStateMachineState _state;
 
@@ -88,10 +84,6 @@ namespace MQTTnet.Serializer
             _serializer = serializer;
         }
 
-        public void OnPacket(Action<MqttBasePacket> action)
-        {
-            _onPacketAction = action;
-        }
                 
         public MqttPacketReadError Push(ArraySegment<byte> data)
         {
@@ -151,12 +143,7 @@ namespace MQTTnet.Serializer
 
             if ((int)_state.Header.PacketType == 0 || (int)_state.Header.PacketType > 14)
                 return MqttPacketReadError.InvalidPacketType;
-
-            //flags
-            //_state.Header.Retain = (b & 0x0001b) > 0;
-            //_state.Header.QoS = (MqttQualityOfServiceLevel)((b << 1) & 0x0011b);
-            //_state.Header.Dup = (b & 0x1000b) > 0;
-
+                        
             _state.Header.FixedHeader = b;
 
             _state.Step = MqttPacketStateMachineStep.BodyLength;
@@ -198,21 +185,6 @@ namespace MQTTnet.Serializer
             if (_state.Body == null)
             {
                 _state.Body = new MqttPacketStateMachineState.MqttBodyState(_state.Length.Value);
-
-                //if (_state.Length.Value <= data.Count)
-                //{
-                //    //Full body in one shot
-                //    _state.Body = new MqttPacketStateMachineState.MqttBodyState(
-                //        new ArraySegment<byte>(data.Array,data.Offset, _state.Length.Value));
-
-                //    remaining = data.Count-_state.Length.Value;
-                //    _state.Body.Offset = _state.Length.Value;
-                //}
-                //else
-                //{
-                //    //Need to buffer
-                    
-                //}
             }
 
             var bytesToRead = _state.Length.Value - _state.Body.Offset;
@@ -253,14 +225,17 @@ namespace MQTTnet.Serializer
                 ControlPacketType = _state.Header.PacketType
             };
 
+
+            MqttBasePacket packet;
             using (var ms = new MemoryStream(_state.Body.Data.Array, _state.Body.Data.Offset, _state.Body.Data.Count,false))
             {
-                var packet = _serializer.Deserialize(header, ms);
-                _onPacketAction?.Invoke(packet);
+                packet = _serializer.Deserialize(header, ms);                
             }
 
             //Reset state
             _state = new MqttPacketStateMachineState();
+
+            OnPacketHandler?.Invoke(packet);
 
         }
     }

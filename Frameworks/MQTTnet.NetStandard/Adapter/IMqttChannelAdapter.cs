@@ -10,14 +10,16 @@ namespace MQTTnet.Adapter
     {
         IMqttPacketSerializer PacketSerializer { get; }
 
-        void OnPacket(Action<MqttBasePacket> action);
+        Func<MqttBasePacket, Task> OnPacketHandler { get; set; }
 
         Task ConnectAsync(TimeSpan timeout, CancellationToken cancellationToken);
 
         Task DisconnectAsync(TimeSpan timeout);
 
         Task SendPacketsAsync(TimeSpan timeout, CancellationToken cancellationToken, MqttBasePacket[] packets);
+        Task SendPacketAsync(TimeSpan timeout, CancellationToken cancellationToken, MqttBasePacket packet);
 
         Task<MqttBasePacket> ReceivePacketAsync(TimeSpan timeout, CancellationToken cancellationToken);
+
     }
 }

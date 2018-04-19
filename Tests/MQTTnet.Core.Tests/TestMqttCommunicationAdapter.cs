@@ -16,6 +16,8 @@ namespace MQTTnet.Core.Tests
 
         public IMqttPacketSerializer PacketSerializer { get; } = new MqttPacketSerializer();
 
+        public Func<MqttBasePacket, Task> OnPacketHandler { get; set; }
+
         public void Dispose()
         {
         }
@@ -36,8 +38,17 @@ namespace MQTTnet.Core.Tests
 
             foreach (var packet in packets)
             {
-                Partner.EnqueuePacketInternal(packet);
+                SendPacketAsync(timeout, cancellationToken, packet);
             }
+
+            return Task.FromResult(0);
+        }
+
+        public Task SendPacketAsync(TimeSpan timeout, CancellationToken cancellationToken, MqttBasePacket packet)
+        {
+            ThrowIfPartnerIsNull();
+
+            Partner.EnqueuePacketInternal(packet);
 
             return Task.FromResult(0);
         }
@@ -63,7 +74,14 @@ namespace MQTTnet.Core.Tests
         {
             if (packet == null) throw new ArgumentNullException(nameof(packet));
 
-            _incomingPackets.Add(packet);
+            if (OnPacketHandler != null)
+            {
+                OnPacketHandler(packet);
+            }
+            else
+            {
+                _incomingPackets.Add(packet);
+            }
         }
 
         private void ThrowIfPartnerIsNull()

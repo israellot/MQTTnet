@@ -59,11 +59,12 @@ namespace MQTTnet.Client
 
                 _adapter = _adapterFactory.CreateClientAdapter(options, _logger);
 
+
                 _logger.Verbose<MqttClient>("Trying to connect with server.");
                 await _adapter.ConnectAsync(_options.CommunicationTimeout, _cancellationTokenSource.Token).ConfigureAwait(false);
                 _logger.Verbose<MqttClient>("Connection with server established.");
 
-                await StartReceivingPacketsAsync().ConfigureAwait(false);
+                _adapter.OnPacketHandler = ProcessReceivedPacketAsync;
 
                 var connectResponse = await AuthenticateAsync(options.WillMessage).ConfigureAwait(false);
                 _logger.Verbose<MqttClient>("MQTT connection with server established.");
@@ -444,17 +445,7 @@ namespace MQTTnet.Client
             }
         }
 
-        private void StartProcessReceivedPacket(MqttBasePacket packet)
-        {
-            Task.Run(() => ProcessReceivedPacketAsync(packet), _cancellationTokenSource.Token);
-        }
-
-        private async Task StartReceivingPacketsAsync()
-        {
-            _adapter.OnPacket(packet => {
-                StartProcessReceivedPacket(packet);
-            });
-        }
+       
 
         private void StartSendingKeepAliveMessages()
         {
