@@ -36,8 +36,6 @@ namespace MQTTnet.Serializer
 
         public Boolean PacketComplete { get; set; }
 
-        
-
         public class MqttBodyState
         {            
             public int Offset { get; set; }
@@ -50,10 +48,18 @@ namespace MQTTnet.Serializer
 
             private byte[] _emptyBuffer = new byte[] { };
 
+            private byte[] _internalBuffer = new byte[1024*4];
+
             public MqttBodyState()
             {
-                //Data = new ArraySegment<byte>(new byte[size]);
                 Buffer = _emptyBuffer;
+            }
+
+            public int InternalBufferSize { get { return _internalBuffer.Length; } }
+
+            public void UseInternalBuffer()
+            {
+                Buffer = _internalBuffer;
             }
 
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -120,7 +126,6 @@ namespace MQTTnet.Serializer
             _state = new MqttPacketStateMachineState();
             _serializer = serializer;
         }
-
                 
         public MqttPacketReadError Push(ArraySegment<byte> data)
         {
@@ -236,11 +241,18 @@ namespace MQTTnet.Serializer
                 }
                 else
                 {
-                    //allocate new buffer
-                    _state.Body.Buffer = new byte[_state.Length.Value];
-                    _state.Body.Length = _state.Length.Value;
+                    if (_state.Body.Length < _state.Body.InternalBufferSize)
+                    {
+                        _state.Body.UseInternalBuffer();
+                        _state.Body.Length = _state.Length.Value;
+                    }
+                    else
+                    {
+                        //allocate new buffer
+                        _state.Body.Buffer = new byte[_state.Length.Value];
+                        _state.Body.Length = _state.Length.Value;
+                    }
                 }
-                
             }
 
             var bytesToRead = _state.Length.Value - _state.Body.WriteOffset;
@@ -282,7 +294,6 @@ namespace MQTTnet.Serializer
                 BodyLength = _state.Length.Value,
                 ControlPacketType = _state.Header.PacketType
             };
-
 
             MqttBasePacket packet;
             using (var ms = new MemoryStream(_state.Body.Buffer, _state.Body.Offset, _state.Body.Length,false))
