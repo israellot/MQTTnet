@@ -34,6 +34,8 @@ namespace MQTTnet.Serializer
 
         public MqttBodyState Body { get; set; } = new MqttBodyState();
 
+        public int ReadLengthHint { get; set; }
+
         public Boolean PacketComplete { get; set; }
 
         public class MqttBodyState
@@ -48,19 +50,11 @@ namespace MQTTnet.Serializer
 
             private byte[] _emptyBuffer = new byte[] { };
 
-            private byte[] _internalBuffer = new byte[1024*4];
-
             public MqttBodyState()
             {
                 Buffer = _emptyBuffer;
             }
-
-            public int InternalBufferSize { get { return _internalBuffer.Length; } }
-
-            public void UseInternalBuffer()
-            {
-                Buffer = _internalBuffer;
-            }
+           
 
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
             public void Reset()
@@ -241,17 +235,9 @@ namespace MQTTnet.Serializer
                 }
                 else
                 {
-                    if (_state.Body.Length < _state.Body.InternalBufferSize)
-                    {
-                        _state.Body.UseInternalBuffer();
-                        _state.Body.Length = _state.Length.Value;
-                    }
-                    else
-                    {
-                        //allocate new buffer
-                        _state.Body.Buffer = new byte[_state.Length.Value];
-                        _state.Body.Length = _state.Length.Value;
-                    }
+                    //allocate new buffer
+                    _state.Body.Buffer = new byte[_state.Length.Value];
+                    _state.Body.Length = _state.Length.Value;
                 }
             }
 

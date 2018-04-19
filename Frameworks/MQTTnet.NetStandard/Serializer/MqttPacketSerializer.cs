@@ -13,11 +13,30 @@ namespace MQTTnet.Serializer
         private static byte[] ProtocolVersionV311Name { get; } = Encoding.UTF8.GetBytes("MQTT");
         private static byte[] ProtocolVersionV310Name { get; } = Encoding.UTF8.GetBytes("MQIs");
 
+        private static ArraySegment<byte> PingReqPacket { get; } = new ArraySegment<byte>(new byte[] { 0b01100_0000, 0x00 });
+        private static ArraySegment<byte> PingRespPacket { get; } = new ArraySegment<byte>(new byte[] { 0b01101_0000, 0x00 });
+        private static ArraySegment<byte> DiconnectPacket { get; } = new ArraySegment<byte>(new byte[] { 0b1110_0000, 0x00 });
+
+
         public MqttProtocolVersion ProtocolVersion { get; set; } = MqttProtocolVersion.V311;
 
         public ArraySegment<byte> Serialize(MqttBasePacket packet)
         {
             if (packet == null) throw new ArgumentNullException(nameof(packet));
+
+            switch (packet){
+                case MqttPingReqPacket _: return PingReqPacket;
+                case MqttPingRespPacket _: return PingRespPacket;
+                case MqttDisconnectPacket _: return DiconnectPacket;
+                case MqttConnAckPacket connAckPacket : return Serialize(connAckPacket);
+                case MqttPubAckPacket pubAckPacket : return Serialize(pubAckPacket);
+                case MqttPubRecPacket pubRecPacket: return Serialize(pubRecPacket);
+                case MqttPubRelPacket pubRelPacket: return Serialize(pubRelPacket);
+                case MqttPubCompPacket pubCompPacket: return Serialize(pubCompPacket);
+            }
+
+
+            //variable size serialization
 
             using (var stream = new MemoryStream(128))
             using (var writer = new MqttPacketWriter(stream))
@@ -47,6 +66,8 @@ namespace MQTTnet.Serializer
             }
         }
 
+        
+
         public MqttBasePacket Deserialize(MqttPacketHeader header, Stream body)
         {
             if (header == null) throw new ArgumentNullException(nameof(header));
@@ -63,15 +84,7 @@ namespace MQTTnet.Serializer
             switch (packet)
             {
                 case MqttConnectPacket connectPacket: return Serialize(connectPacket, writer);
-                case MqttConnAckPacket connAckPacket: return Serialize(connAckPacket, writer);
-                case MqttDisconnectPacket _: return SerializeEmptyPacket(MqttControlPacketType.Disconnect);
-                case MqttPingReqPacket _: return SerializeEmptyPacket(MqttControlPacketType.PingReq);
-                case MqttPingRespPacket _: return SerializeEmptyPacket(MqttControlPacketType.PingResp);
-                case MqttPublishPacket publishPacket: return Serialize(publishPacket, writer);
-                case MqttPubAckPacket pubAckPacket: return Serialize(pubAckPacket, writer);
-                case MqttPubRecPacket pubRecPacket: return Serialize(pubRecPacket, writer);
-                case MqttPubRelPacket pubRelPacket: return Serialize(pubRelPacket, writer);
-                case MqttPubCompPacket pubCompPacket: return Serialize(pubCompPacket, writer);
+                case MqttPublishPacket publishPacket: return Serialize(publishPacket, writer);               
                 case MqttSubscribePacket subscribePacket: return Serialize(subscribePacket, writer);
                 case MqttSubAckPacket subAckPacket: return Serialize(subAckPacket, writer);
                 case MqttUnsubscribePacket unsubscribePacket: return Serialize(unsubscribePacket, writer);
@@ -378,38 +391,39 @@ namespace MQTTnet.Serializer
             return MqttPacketWriter.BuildFixedHeader(MqttControlPacketType.Connect);
         }
 
-        private byte Serialize(MqttConnAckPacket packet, MqttPacketWriter writer)
+        private ArraySegment<byte> Serialize(MqttConnAckPacket packet)
         {
-            if (ProtocolVersion == MqttProtocolVersion.V310)
+            var data = new byte[4] { 0b0010_0000, 0b0000_0010, 0x00, 0x00 };
+
+            if (ProtocolVersion == MqttProtocolVersion.V311)
             {
-                writer.Write(0);
-            }
-            else if (ProtocolVersion == MqttProtocolVersion.V311)
-            {
-                var connectAcknowledgeFlags = new ByteWriter();
-                connectAcknowledgeFlags.Write(packet.IsSessionPresent);
-                writer.Write(connectAcknowledgeFlags);
+                if (packet.IsSessionPresent)
+                    data[2] = 0b0000_0001;
             }
             else
             {
                 throw new MqttProtocolViolationException("Protocol version not supported.");
             }
 
-            writer.Write((byte)packet.ConnectReturnCode);
+            data[3] = (byte)packet.ConnectReturnCode;
 
-            return MqttPacketWriter.BuildFixedHeader(MqttControlPacketType.ConnAck);
+            return new ArraySegment<byte>(data);
         }
 
-        private static byte Serialize(MqttPubRelPacket packet, MqttPacketWriter writer)
+        private static ArraySegment<byte> Serialize(MqttPubRelPacket packet, MqttPacketWriter writer)
         {
             if (!packet.PacketIdentifier.HasValue)
             {
                 throw new MqttProtocolViolationException("PubRel packet has no packet identifier.");
             }
 
-            writer.Write(packet.PacketIdentifier.Value);
+            var data = new byte[4] { 0b0110_0010, 0b0000_0010, 0x00, 0x00 };
 
-            return MqttPacketWriter.BuildFixedHeader(MqttControlPacketType.PubRel, 0x02);
+            data[2] = (byte)(packet.PacketIdentifier.Value & 0xF0);
+            data[3] = (byte)(packet.PacketIdentifier.Value & 0x0F);
+
+            return new ArraySegment<byte>(data);
+           
         }
 
         private static byte Serialize(MqttPublishPacket packet, MqttPacketWriter writer)
@@ -457,40 +471,49 @@ namespace MQTTnet.Serializer
             return MqttPacketWriter.BuildFixedHeader(MqttControlPacketType.Publish, fixedHeader);
         }
 
-        private static byte Serialize(MqttPubAckPacket packet, MqttPacketWriter writer)
+        private static ArraySegment<byte> Serialize(MqttPubAckPacket packet, MqttPacketWriter writer)
         {
             if (!packet.PacketIdentifier.HasValue)
             {
                 throw new MqttProtocolViolationException("PubAck packet has no packet identifier.");
             }
 
-            writer.Write(packet.PacketIdentifier.Value);
+            var data = new byte[4] { 0b0100_0000, 0b0000_0010, 0x00, 0x00 };
 
-            return MqttPacketWriter.BuildFixedHeader(MqttControlPacketType.PubAck);
+            data[2] = (byte)(packet.PacketIdentifier.Value & 0xF0);
+            data[3] = (byte)(packet.PacketIdentifier.Value & 0x0F);
+
+            return new ArraySegment<byte>(data);
         }
 
-        private static byte Serialize(MqttPubRecPacket packet, MqttPacketWriter writer)
+        private static ArraySegment<byte> Serialize(MqttPubRecPacket packet, MqttPacketWriter writer)
         {
             if (!packet.PacketIdentifier.HasValue)
             {
                 throw new MqttProtocolViolationException("PubRec packet has no packet identifier.");
             }
 
-            writer.Write(packet.PacketIdentifier.Value);
+            var data = new byte[4] { 0b0101_0000, 0b0000_0010, 0x00, 0x00 };
 
-            return MqttPacketWriter.BuildFixedHeader(MqttControlPacketType.PubRec);
+            data[2] = (byte)(packet.PacketIdentifier.Value & 0xF0);
+            data[3] = (byte)(packet.PacketIdentifier.Value & 0x0F);
+
+            return new ArraySegment<byte>(data);
         }
 
-        private static byte Serialize(MqttPubCompPacket packet, MqttPacketWriter writer)
+        private static ArraySegment<byte> Serialize(MqttPubCompPacket packet, MqttPacketWriter writer)
         {
             if (!packet.PacketIdentifier.HasValue)
             {
                 throw new MqttProtocolViolationException("PubComp packet has no packet identifier.");
             }
 
-            writer.Write(packet.PacketIdentifier.Value);
+            var data = new byte[4] { 0b0111_0000, 0b0000_0010, 0x00, 0x00 };
 
-            return MqttPacketWriter.BuildFixedHeader(MqttControlPacketType.PubComp);
+            data[2] = (byte)(packet.PacketIdentifier.Value & 0xF0);
+            data[3] = (byte)(packet.PacketIdentifier.Value & 0x0F);
+
+            return new ArraySegment<byte>(data);
         }
 
         private static byte Serialize(MqttSubscribePacket packet, MqttPacketWriter writer)
