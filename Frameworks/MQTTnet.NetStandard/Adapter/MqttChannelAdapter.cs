@@ -8,7 +8,6 @@ using System.Threading.Tasks.Dataflow;
 using MQTTnet.Channel;
 using MQTTnet.Diagnostics;
 using MQTTnet.Exceptions;
-using MQTTnet.Internal;
 using MQTTnet.Packets;
 using MQTTnet.Serializer;
 
@@ -83,8 +82,8 @@ namespace MQTTnet.Adapter
             ThrowIfDisposed();
             _logger.Verbose<MqttChannelAdapter>("Connecting [Timeout={0}]", timeout);
 
-            return ExecuteAndWrapExceptionAsync(() => _channel.ConnectAsync(cancellationToken).TimeoutAfter(timeout));              
-            
+            return ExecuteAndWrapExceptionAsync(() =>
+                Internal.TaskExtensions.TimeoutAfter(ct => _channel.ConnectAsync(ct), timeout, cancellationToken));
         }
 
         public Task DisconnectAsync(TimeSpan timeout)
@@ -92,9 +91,8 @@ namespace MQTTnet.Adapter
             ThrowIfDisposed();
             _logger.Verbose<MqttChannelAdapter>("Disconnecting [Timeout={0}]", timeout);
 
-            _receiveTaskCts.Cancel();
-
-            return ExecuteAndWrapExceptionAsync(() => _channel.DisconnectAsync().TimeoutAfter(timeout));
+            return ExecuteAndWrapExceptionAsync(() =>
+                Internal.TaskExtensions.TimeoutAfter(ct => _channel.DisconnectAsync(), timeout, CancellationToken.None));
         }
 
         public async Task SendPacketsAsync(TimeSpan timeout, CancellationToken cancellationToken, MqttBasePacket[] packets)
@@ -120,11 +118,11 @@ namespace MQTTnet.Adapter
 
                 var packetData = PacketSerializer.Serialize(packet);
 
-                return _channel.WriteAsync(
+                return Internal.TaskExtensions.TimeoutAfter(ct => _channel.WriteAsync(
                     packetData.Array,
                     packetData.Offset,
                     packetData.Count,
-                    cancellationToken);
+                    ct), timeout, cancellationToken);
             });
         }
 
